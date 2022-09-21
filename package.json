@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@firebase/auth": "^0.20.7"
+  }
+}

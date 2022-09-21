@@ -112,3 +112,63 @@ export const onChatReceived = functions.database
             return false
         });  
 })
+
+
+export const onCreateUser = functions.https.onRequest((req,res)=>{
+    
+    if(req.method == 'POST'){
+        let headers = req.headers;
+        let body = req.body;
+        let envKey = process.env.KEY;
+        console.log(headers)
+        if ('api-key' in headers){
+            if (headers['api-key'] == envKey){
+                let fullname = `${body.firstname} ${body.lastname}`
+                let number =''
+                if (body.phone.length == 10){
+                    let substring = body.phone.substring(1);
+                    number = `+593${substring}`
+                }
+                else{
+                    res.send({sucess:false
+                            ,error:{
+                            code:"noenoughLen"}})
+                    
+                }
+                admin.auth().createUser({
+                    email: body.email,
+                    emailVerified: true,
+                    phoneNumber: number,
+                    password: body.password,
+                    displayName: fullname,
+                    disabled: false,
+                })
+                .then((userRecord) => {
+                    console.log('Successfully created new user:', userRecord.uid);
+                    admin.firestore().collection('users').doc(userRecord.uid).set({
+                        email:body.email,
+                        lastname:body.lastname,
+                        name:body.firstname,
+                        phone:number,
+                        type:body.type,
+                        status:true
+                    }).then((info)=>{
+                        res.send({sucess:true,body:info})
+                    }).catch((error) => {
+                        res.send({sucess:false,body:'cant create user on db',error:error})
+                      });
+                    
+                  })
+                  .catch((error) => {
+                    res.send({sucess:false,body:'cant create user on auth',error:error})
+                  });
+            }else{
+                res.send('api key doesnt match')
+            }
+        }else{
+            res.send('no api key found')   
+        }      
+    }else{
+        res.send('Only post method allow')
+    }
+}) 
