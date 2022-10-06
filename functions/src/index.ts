@@ -1,9 +1,26 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
+import * as nodemailer from "nodemailer";
+// import cors = require('cors')
+
 // // Start writing Firebase Functions
 // // https://firebase.google.com/docs/functions/typescript
 //
 admin.initializeApp()
+
+let email_from = 'goubi.webmaster@gmail.com'
+
+let transporter = nodemailer.createTransport({
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: {
+        user: email_from,
+        pass: 'gmixafjbhypywlly'
+    }
+});
+
+
 const messageObject = {
     "gas":{
         notification: {
@@ -120,7 +137,6 @@ export const onCreateUser = functions.https.onRequest((req,res)=>{
         let headers = req.headers;
         let body = req.body;
         let envKey = process.env.KEY;
-        console.log(headers)
         if ('api-key' in headers){
             if (headers['api-key'] == envKey){
                 let fullname = `${body.firstname} ${body.lastname}`
@@ -137,19 +153,23 @@ export const onCreateUser = functions.https.onRequest((req,res)=>{
                 }
                 admin.auth().createUser({
                     email: body.email,
-                    emailVerified: true,
+                    emailVerified: false,
                     phoneNumber: number,
                     password: body.password,
                     displayName: fullname,
                     disabled: false,
                 })
-                .then((userRecord) => {
+                .then(async (userRecord) => {
+                    //let link = await admin.auth().generateEmailVerificationLink(userRecord.email!);
                     console.log('Successfully created new user:', userRecord.uid);
+                
                     admin.firestore().collection('users').doc(userRecord.uid).set({
                         email:body.email,
                         lastname:body.lastname,
                         name:body.firstname,
                         phone:number,
+                        cedula: body.cedula ? body.cedula : "NA",
+                        placa: body.placa ? body.placa : "NA",
                         type:body.type,
                         status:true
                     }).then((info)=>{
@@ -172,3 +192,28 @@ export const onCreateUser = functions.https.onRequest((req,res)=>{
         res.send('Only post method allow')
     }
 }) 
+
+export const sendEmail = functions.firestore
+    .document('users/{userId}')
+    .onCreate(async (snap, context) => {
+        
+        const link = await admin.auth().generateEmailVerificationLink(snap.data().email);
+        const mailOptions = {
+            from: email_from,
+            to: snap.data().email,
+            subject: 'confirm registration Go Ubi',
+            html: `<h1>User Confirmation</h1>
+                                <p>
+                                   <b>Please click here </b>${link}<br>
+                                </p>`
+        };
+        console.log(mailOptions);
+
+        transporter.sendMail(mailOptions, (error, data) => {
+            if (error) {
+                console.log(error)
+                return
+            }
+            console.log("Sent!")
+        });
+    });
