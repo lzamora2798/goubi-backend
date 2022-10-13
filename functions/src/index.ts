@@ -1,6 +1,9 @@
 import * as functions from "firebase-functions";
 import * as admin from "firebase-admin";
 import * as nodemailer from "nodemailer";
+
+import * as cors from 'cors';
+const corsHandler = cors({origin: true});
 // import cors = require('cors')
 
 // // Start writing Firebase Functions
@@ -23,25 +26,16 @@ let transporter = nodemailer.createTransport({
 
 const messageObject = {
     "gas":{
-        notification: {
             title: 'Nuevo Pedido',
             body: 'Nuevo pedido de gas'
         },
-        topic: "gasRequest",
-    },
-    "water":{
-        notification: {
+    "water":{ 
             title: 'Nuevo Pedido',
-            body: 'Nuevo pedido de agua'
-        },
-        topic: "waterRequest",
+            body: 'Nuevo pedido de agua' 
     },
     "recicle":{
-        notification: {
             title: 'Nuevo Pedido',
             body: 'Nuevo pedido de reciclaje'
-        },
-        topic: "recicleRequest",
     },
 
 };
@@ -63,9 +57,47 @@ const tokenIdUser = async (userId: string) =>{
     return doc.get('tokens') as Array<string>
 };
 
+const deg2rad = (deg:number) => {
+    return deg * (Math.PI/180)
+  }
+const checkdistance = (lat1:number,lat2:number,lng1:number,lng2:number)=>{
+    var R = 6371; // Radius of the earth in km
+    var dLat = deg2rad(lat2-lat1);  // deg2rad below
+    var dLon = deg2rad(lng2-lng1); 
+    var a = 
+        Math.sin(dLat/2) * Math.sin(dLat/2) +
+        Math.cos(deg2rad(lat1)) * Math.cos(deg2rad(lat2)) * 
+        Math.sin(dLon/2) * Math.sin(dLon/2)
+        ; 
+    var c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)); 
+    var d = R * c; // Distance in km
+    return d;
+}
+
+const buildArrayOfTokens = async (type: string,lat:number,lng:number) =>{ 
+    const tokenReference = admin.firestore().collection("users").where('type', '==', type);
+    const distanceReference = await admin.firestore().collection("settings").doc("data").get();
+    const distanceData = distanceReference.get('radio_1') as Number;
+    const tokenSnapshot  = await tokenReference.get();
+    const results: any[] = [];
+    console.log(distanceData)
+    tokenSnapshot.forEach(doc => {
+        let tmp_data = doc.data();
+        let tmpLng = tmp_data.lng ? tmp_data.lng : 38.2340 ;
+        let tmpLat = tmp_data.lat ? tmp_data.lat :-100.34230 ;
+        let distance = checkdistance(tmpLat,lat,tmpLng,lng);
+        if (distance <= distanceData){
+            results.push(tmp_data.tokens);
+        }
+    });
+    const tokenIds = await Promise.all(results);
+    return tokenIds;
+
+};
+
 export const onOrderCreate = functions.database
 .ref('/requests/{orderId}')
-.onCreate((snapshot,context)=>{
+.onCreate(async (snapshot,context)=>{
     let message;
     const data = snapshot.val()
     if (data.type == 'gas'){
@@ -77,16 +109,25 @@ export const onOrderCreate = functions.database
     else{
         message = messageObject['recicle']
     }
+    const deliveryToken = await buildArrayOfTokens(data.type,data.lat,data.lng);
+    if (deliveryToken.length){
 
-    admin.messaging()
-        .send(message)
+        let notifyMessage = {
+            notification: message,
+            tokens: deliveryToken[0]
+        }
+        console.log(notifyMessage)
+        admin.messaging().sendMulticast(notifyMessage)
         .then((response) => {
             console.log("Successfully sent message:", response);
             return true
         })
         .catch((error) => {
             console.log("Error sending message:", error);
-        });  
+            return false
+        }); 
+    } 
+
 })
 
 
@@ -171,7 +212,8 @@ export const onCreateUser = functions.https.onRequest((req,res)=>{
                         cedula: body.cedula ? body.cedula : "NA",
                         placa: body.placa ? body.placa : "NA",
                         type:body.type,
-                        status:true
+                        status:true,
+                        blocked:false
                     }).then((info)=>{
                         res.send({sucess:true,body:info})
                     }).catch((error) => {
@@ -201,13 +243,33 @@ export const sendEmail = functions.firestore
         const mailOptions = {
             from: email_from,
             to: snap.data().email,
-            subject: 'confirm registration Go Ubi',
-            html: `<h1>User Confirmation</h1>
-                                <p>
-                                   <b>Please click here </b>${link}<br>
-                                </p>`
+            subject: 'Confirmar Registro Go Ubi',
+            html: `<!DOCTYPE html>
+            <html>
+            <head>
+                <title>Confirmar registro</title>
+                <style>
+                .button {
+                    background-color: #1c87c9;
+                    border: none;
+                    color: white;
+                    padding: 20px 34px;
+                    text-align: center;
+                    text-decoration: none;
+                    display: inline-block;
+                    font-size: 20px;
+                    margin: 4px 2px;
+                    cursor: pointer;
+                }
+                </style>
+            </head>
+            <body>
+                <h4>Registro de usuario!</h4>
+                </br>
+                <a href=${link} class="button">Click aqui!</a>
+            </body>
+            </html>`
         };
-        console.log(mailOptions);
 
         transporter.sendMail(mailOptions, (error, data) => {
             if (error) {
@@ -217,3 +279,38 @@ export const sendEmail = functions.firestore
             console.log("Sent!")
         });
     });
+
+
+export const onDisableUser = functions.https.onRequest((req,res)=>{
+    corsHandler(req, res, async () => {
+
+        if(req.method == 'POST'){
+            let headers = req.headers;
+            let body = req.body;
+            let envKey = process.env.KEY;
+            if ('api-key' in headers){
+                //res.set('Access-Control-Allow-Origin', '*');
+                if (headers['api-key'] == envKey){
+                    admin.firestore().collection('users').doc(body.uid).update({
+                        blocked:body.flag
+                    }).then((info)=>{
+                        admin.auth().updateUser(body.uid,{disabled:body.flag}).then(()=>{
+                            res.send({sucess:true})
+                        }).catch((err)=>{
+                            res.send({sucess:false,msg:err})
+                        })
+                    }).catch((error) => {
+                        res.send({sucess:false,msg:error})
+                    });
+                    
+                }else{
+                    res.send('api key doesnt match')
+                }
+            }else{
+                res.send('no api key found')   
+            }      
+        }else{
+            res.send('Only post method allow')
+        }
+    })
+    }) 
