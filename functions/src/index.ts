@@ -131,6 +131,31 @@ export const onOrderCreate = functions.database
 })
 
 
+export const onDeleteDeliveryRequest = functions.database
+.ref('deliveryProgress/{userui}')
+.onDelete(async (snapshot,context) => {
+    let message;
+    const userui = context.params.userui
+    const clientToken = await tokenIdUser(userui as string);
+    message = {
+        notification: {
+            title: 'Mensaje de Plataforma',
+            body: 'El pedido fue cancelado'
+        },
+        tokens: clientToken    
+    }
+    admin.messaging()
+        .sendMulticast(message)
+        .then((response) => {
+            console.log("Successfully sent message:", response);
+            return true
+        })
+        .catch((error) => {
+            console.log("Error sending message:", error);
+            return false
+        });  
+})
+
 export const onChatReceived = functions.database
 .ref('/chats/{orderId}/{messageId}')
 .onCreate(async (snapshot,context)=> {
@@ -303,6 +328,73 @@ export const onDisableUser = functions.https.onRequest((req,res)=>{
                         res.send({sucess:false,msg:error})
                     });
                     
+                }else{
+                    res.send('api key doesnt match')
+                }
+            }else{
+                res.send('no api key found')   
+            }      
+        }else{
+            res.send('Only post method allow')
+        }
+    })
+    }) 
+
+
+export const onMetrics = functions.https.onRequest((req,res)=>{
+    corsHandler(req, res, async () => {
+
+        if(req.method == 'GET'){
+            let headers = req.headers;
+            let envKey = process.env.KEY;
+            if ('api-key' in headers){
+                //res.set('Access-Control-Allow-Origin', '*');
+                if (headers['api-key'] == envKey){
+                    
+                    const userReference = admin.firestore().collection("users");
+                    const ordersReference = admin.firestore().collection("orders");
+
+                    const userSnapshot  = await userReference.get();
+                    const ordersSnapshot  = await ordersReference.get();
+                    const userresults: any[] = [];
+                    userSnapshot.forEach(doc => {
+                        let userData = doc.data();
+                        if (userData.type != 'client'){
+                            let c1 = 0; //completas
+                            let c2 = 0; // canceladas por user
+                            let c3 = 0; // canceladas por delivery
+
+                            ordersSnapshot.forEach(doc2 => { 
+                                let orderData = doc2.data();
+                                if (orderData.dui == doc.id){
+                                    if(orderData.complete == true){
+                                        c1++;
+                                    }
+                                    if(orderData.clientCancel == true){
+                                        c2++;
+                                    }
+                                    if(orderData.deliveryCancel == true){
+                                        c3++;
+                                    }
+                                }
+                            })
+                            if (userData.type != 'admin'){
+                                userresults.push(
+                                    {
+                                        name: `${userData.name} ${userData.lastname}`,
+                                        id : doc.id,
+                                        c1,
+                                        c2,
+                                        c3,
+                                        type: userData.type
+                                    }
+                                    );
+                            }
+                        }
+                    });
+                    
+                    const usersInfo = await Promise.all(userresults);
+                     res.send({data:usersInfo})
                 }else{
                     res.send('api key doesnt match')
                 }
