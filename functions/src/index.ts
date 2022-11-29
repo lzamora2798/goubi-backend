@@ -75,7 +75,7 @@ const checkdistance = (lat1:number,lat2:number,lng1:number,lng2:number)=>{
 }
 
 const buildArrayOfTokens = async (type: string,lat:number,lng:number) =>{ 
-    const tokenReference = admin.firestore().collection("users").where('type', '==', type);
+    const tokenReference = admin.firestore().collection("users").where('type', '==', type).where('status', '==', true);
     const distanceReference = await admin.firestore().collection("settings").doc("data").get();
     const distanceData = distanceReference.get('radio_1') as Number;
     const tokenSnapshot  = await tokenReference.get();
