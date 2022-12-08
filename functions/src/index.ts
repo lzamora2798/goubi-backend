@@ -57,6 +57,12 @@ const tokenIdUser = async (userId: string) =>{
     return doc.get('tokens') as Array<string>
 };
 
+const completeOrder = async (orderId: string) =>{ 
+    const ref = admin.firestore().collection("orders").doc(orderId);
+    const doc = await ref.get();
+    return doc.get('complete') as boolean;
+};
+
 const deg2rad = (deg:number) => {
     return deg * (Math.PI/180)
   }
@@ -135,14 +141,20 @@ export const onDeleteDeliveryRequest = functions.database
 .ref('deliveryProgress/{userui}')
 .onDelete(async (snapshot,context) => {
     let message;
+    const orderId = snapshot.val()["orderid"]
     const userui = context.params.userui
     const clientToken = await tokenIdUser(userui as string);
+
+    const distanceData = await completeOrder(orderId as string)
     message = {
         notification: {
             title: 'Mensaje de Plataforma',
             body: 'El pedido fue cancelado'
         },
         tokens: clientToken    
+    }
+    if(distanceData){
+        message.notification.body = 'El pedido fue completado'
     }
     admin.messaging()
         .sendMulticast(message)
